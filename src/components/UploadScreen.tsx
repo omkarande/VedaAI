@@ -1,53 +1,80 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Upload, X } from "lucide-react";
-import { formatSize, isSupported, MAX_UPLOAD_BYTES } from "../lib/uploads";
+import { Plus, Upload, X } from "lucide-react";
+import {
+  formatSize,
+  isSupported,
+  MAX_FILES_PER_SLOT,
+  MAX_UPLOAD_BYTES,
+} from "../lib/uploads";
 import type { UploadedFile } from "../types";
 
 type Slot = "question" | "answer";
 
 type UploadScreenProps = {
-  question: UploadedFile | null;
-  answer: UploadedFile | null;
-  onFile: (slot: Slot, file: File) => void;
-  onRemove: (slot: Slot) => void;
+  question: UploadedFile[];
+  answer: UploadedFile[];
+  onAdd: (slot: Slot, files: File[]) => void;
+  onRemove: (slot: Slot, id: string) => void;
   onStart: () => void;
 };
 
 function DropZone({
   slot,
   titleAccent,
-  file,
-  onFile,
+  files,
+  onAdd,
   onRemove,
 }: {
   slot: Slot;
   titleAccent: string;
-  file: UploadedFile | null;
-  onFile: (slot: Slot, file: File) => void;
-  onRemove: (slot: Slot) => void;
+  files: UploadedFile[];
+  onAdd: (slot: Slot, files: File[]) => void;
+  onRemove: (slot: Slot, id: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   function take(list: FileList | null) {
-    const next = list?.[0];
-    if (!next) return;
+    if (!list?.length) return;
 
-    if (!isSupported(next)) {
-      setProblem("Upload a PDF or an image file.");
-      return;
-    }
-    if (next.size > MAX_UPLOAD_BYTES) {
-      setProblem(`That file is ${formatSize(next.size)}. The limit is 10MB.`);
+    const incoming = Array.from(list);
+    const room = MAX_FILES_PER_SLOT - files.length;
+    if (room <= 0) {
+      setProblem(`You can add up to ${MAX_FILES_PER_SLOT} files on this side.`);
       return;
     }
 
-    setProblem(null);
-    onFile(slot, next);
+    const accepted: File[] = [];
+    const rejected: string[] = [];
+    for (const file of incoming.slice(0, room)) {
+      if (!isSupported(file)) {
+        rejected.push(`${file.name}: upload a PDF or an image.`);
+        continue;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        rejected.push(
+          `${file.name} is ${formatSize(file.size)}. The limit is 10MB per file.`,
+        );
+        continue;
+      }
+      accepted.push(file);
+    }
+
+    if (incoming.length > room) {
+      rejected.unshift(
+        `Only ${room} more file${room === 1 ? "" : "s"} can be added here.`,
+      );
+    }
+
+    setProblem(rejected[0] ?? null);
+    if (accepted.length) onAdd(slot, accepted);
   }
+
+  const totalPages = files.reduce((sum, file) => sum + (file.pages || 0), 0);
+  const canAddMore = files.length < MAX_FILES_PER_SLOT;
 
   return (
     <div
@@ -69,37 +96,71 @@ function DropZone({
         ref={inputRef}
         type="file"
         accept=".pdf,image/*"
+        multiple
         className="hidden"
         onChange={(event) => {
           take(event.target.files);
           event.currentTarget.value = "";
         }}
       />
-      {file ? (
-        <>
-          <button
-            type="button"
-            className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full text-[#6b6b6b] hover:bg-[#f0f0f0]"
-            onClick={() => onRemove(slot)}
-            aria-label={`Remove ${file.name}`}
-          >
-            <X className="size-4" />
-          </button>
-          <div className="flex w-full max-w-[280px] items-center gap-3 rounded-xl bg-[#fff5f5] px-3 py-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#e24b4b] text-[11px] font-extrabold text-white">
-              {file.kind}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">{file.name}</p>
-              <p className="text-xs text-[#6b6b6b]">
-                {file.sizeLabel}
-                {file.pages
-                  ? ` · ${file.pages} ${file.pages === 1 ? "Page" : "Pages"}`
-                  : ""}
-              </p>
-            </div>
-          </div>
-        </>
+      {files.length ? (
+        <div className="flex w-full flex-col items-center gap-3">
+          <p className="text-[15px] font-semibold">
+            Upload <span className="text-[#f36b1c]">{titleAccent}</span>
+          </p>
+          <ul className="flex max-h-[220px] w-full max-w-[320px] flex-col gap-2 overflow-auto">
+            {files.map((file) => (
+              <li
+                key={file.id}
+                className="flex w-full items-center gap-3 rounded-xl bg-[#fff5f5] px-3 py-3"
+              >
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#e24b4b] text-[11px] font-extrabold text-white">
+                  {file.kind}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{file.name}</p>
+                  <p className="text-xs text-[#6b6b6b]">
+                    {file.sizeLabel}
+                    {file.pages
+                      ? ` · ${file.pages} ${file.pages === 1 ? "Page" : "Pages"}`
+                      : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="flex size-7 shrink-0 items-center justify-center rounded-full text-[#6b6b6b] hover:bg-[#f0f0f0]"
+                  onClick={() => onRemove(slot, file.id)}
+                  aria-label={`Remove ${file.name}`}
+                >
+                  <X className="size-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {canAddMore && (
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#f36b1c] hover:underline"
+              onClick={() => inputRef.current?.click()}
+            >
+              <Plus className="size-3.5" />
+              Add another image or PDF
+            </button>
+          )}
+          <p className="text-xs text-[#8a8a8a]">
+            {files.length} {files.length === 1 ? "file" : "files"}
+            {totalPages
+              ? ` · ${totalPages} ${totalPages === 1 ? "page" : "pages"} total`
+              : ""}
+            {" · "}
+            Max 10MB each
+          </p>
+          {problem && (
+            <p className="text-center text-xs font-medium text-[#e24b4b]">
+              {problem}
+            </p>
+          )}
+        </div>
       ) : (
         <button
           type="button"
@@ -112,7 +173,9 @@ function DropZone({
           <span className="text-[15px] font-semibold">
             Upload <span className="text-[#f36b1c]">{titleAccent}</span>
           </span>
-          <span className="text-xs text-[#8a8a8a]">PDF or image · Max 10MB</span>
+          <span className="text-xs text-[#8a8a8a]">
+            PDF or images · Max 10MB each · Multiple photos OK
+          </span>
           {problem && (
             <span className="text-xs font-medium text-[#e24b4b]">{problem}</span>
           )}
@@ -125,11 +188,11 @@ function DropZone({
 export default function UploadScreen({
   question,
   answer,
-  onFile,
+  onAdd,
   onRemove,
   onStart,
 }: UploadScreenProps) {
-  const ready = Boolean(question && answer);
+  const ready = question.length > 0 && answer.length > 0;
 
   return (
     <div className="flex h-full w-full flex-col items-center gap-6 overflow-auto px-2 pb-6 md:gap-9">
@@ -140,7 +203,9 @@ export default function UploadScreen({
             Question Paper & Answer Sheets
           </span>
         </h1>
-        <p className="text-sm text-[#6b6b6b]">Upload both files to get started</p>
+        <p className="max-w-md text-center text-sm text-[#6b6b6b]">
+          Upload a PDF or one or more page photos for each side
+        </p>
       </div>
 
       <div className="relative flex size-[168px] items-center justify-center">
@@ -167,15 +232,15 @@ export default function UploadScreen({
         <DropZone
           slot="question"
           titleAccent="Question Paper"
-          file={question}
-          onFile={onFile}
+          files={question}
+          onAdd={onAdd}
           onRemove={onRemove}
         />
         <DropZone
           slot="answer"
           titleAccent="Answer Sheet"
-          file={answer}
-          onFile={onFile}
+          files={answer}
+          onAdd={onAdd}
           onRemove={onRemove}
         />
       </div>
@@ -194,7 +259,8 @@ export default function UploadScreen({
           Start Mapping →
         </button>
         <p className="text-center text-xs text-[#8a8a8a]">
-          Once both files are uploaded, you'll be able to map answers with questions
+          Once both sides have at least one file, you can map answers to
+          questions
         </p>
       </div>
     </div>

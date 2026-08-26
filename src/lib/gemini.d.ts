@@ -1,5 +1,8 @@
 export const MODEL: string;
+export const OPENROUTER_MODEL: string;
 export function hasApiKey(): boolean;
+export function hasGeminiKey(): boolean;
+export function hasOpenRouterKey(): boolean;
 export function generateJson(args: {
   prompt: string;
   pages: { page: number; dataUrl: string }[];

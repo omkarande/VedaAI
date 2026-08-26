@@ -6,6 +6,9 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: dir,
+  // Lets a production build run against its own output directory while a dev
+  // server is using .next, instead of the two corrupting each other.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   experimental: {
     serverActions: {
       bodySizeLimit: "80mb",

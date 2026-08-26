@@ -131,13 +131,13 @@ function toJpeg(pngName) {
   return jpg;
 }
 
-const answerPdf = join(samples, "answer-sheet-2page.pdf");
+const answerPdf = join(samples, "answer-sheet.pdf");
 writeFileSync(
   answerPdf,
-  buildPdf([toJpeg("answer-p1.png"), toJpeg("answer-p2.png")]),
+  buildPdf([toJpeg("real-answer-p1.png"), toJpeg("real-answer-p2.png")]),
 );
 console.log("wrote", answerPdf);
 
-const questionPdf = join(samples, "question-paper-multipage.pdf");
-writeFileSync(questionPdf, buildPdf([toJpeg("question-multipage.png")]));
+const questionPdf = join(samples, "question-paper.pdf");
+writeFileSync(questionPdf, buildPdf([toJpeg("real-question-paper.png")]));
 console.log("wrote", questionPdf);

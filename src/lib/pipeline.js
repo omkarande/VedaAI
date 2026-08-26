@@ -1,4 +1,5 @@
 import { boxToRegion, generateJson, hasApiKey, MODEL } from "./gemini.js";
+import { applyLengthPolicy } from "./lengthPolicy";
 
 const QUESTION_SCHEMA = {
   type: "object",
@@ -111,11 +112,31 @@ function normaliseLabel(value) {
     .replace(/^(?:q|ques|question|ans|answer)(?=\d)/, "");
 }
 
+/**
+ * Tidies a number for display without changing what it means: "Q1." becomes
+ * "1" and "2)" becomes "2", while the brackets in "5 (a)" are kept.
+ */
+function cleanNumber(value, fallback) {
+  let text = String(value ?? "")
+    .trim()
+    .replace(/^(?:q|ques|question)\s*(?=\d)/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.:,;]+$/, "");
+
+  if (text.endsWith(")") && !text.includes("(")) {
+    text = text.slice(0, -1).replace(/[.:,;]+$/, "");
+  }
+
+  return text.trim() || String(fallback);
+}
+
 async function extractQuestions(pages) {
   const data = await generateJson({
     pages,
     schema: QUESTION_SCHEMA,
     prompt: `You are reading a printed exam question paper. Extract EVERY question in the exact printed order.
+
+The paper may be a multi-page PDF or a sequence of photographs of each page. Treat the images as consecutive pages in the order given (Page 1, Page 2, …).
 
 Rules:
 - Preserve the original numbering exactly as printed (for example "1", "5", "11 (a)").
@@ -128,7 +149,7 @@ Rules:
 
   return (data.questions ?? []).map((question, index) => ({
     id: `q${index + 1}`,
-    number: String(question.number ?? index + 1).trim(),
+    number: cleanNumber(question.number, index + 1),
     text: String(question.text ?? "").trim(),
     maxMarks: Number(question.maxMarks ?? 0) || 0,
     sourcePage: Number(question.page ?? 1) || 1,
@@ -141,6 +162,8 @@ async function extractAnswers(pages) {
     pages,
     schema: ANSWER_SCHEMA,
     prompt: `You are reading a student's HANDWRITTEN answer sheet. Find every distinct answer the student wrote.
+
+The sheet may be a multi-page PDF or several photographs of the same student's work (one image per page). Treat them as consecutive pages of one answer booklet in the order given.
 
 Rules:
 - The student may answer in any order, and may skip questions entirely.
@@ -210,7 +233,12 @@ ${pairs
 Rules:
 - awarded must be between 0 and the question's max marks.
 - status is "correct" for full marks, "partial" for some marks, "incorrect" for zero.
-- feedback is one or two encouraging sentences addressed to the student.
+- Length vs marks: judge whether the answer is developed enough for the marks on offer.
+  - A 1-mark question may be a word, phrase, or short sentence.
+  - For 2+ marks, expect roughly one distinct point, step, or sentence per mark.
+  - If the answer is too short or underdeveloped for the allocated marks, do NOT award full marks even if the few words present are correct. Deduct for missing explanation, working, or points.
+  - When you deduct for length, you MUST say so in feedback (for example: "This answer is too short for an N-mark question; more explanation or working was needed.").
+- feedback is one or two sentences addressed to the student, including the length note when it applies.
 - overall is a short summary of the whole paper for the teacher.`,
   });
 
@@ -223,7 +251,7 @@ Rules:
 export async function runPipeline({ questionPages, answerPages, onProgress }) {
   if (!hasApiKey()) {
     throw new Error(
-      "GEMINI_API_KEY is not set. Add it to a .env file in the project root and restart the server.",
+      "No model provider is configured. Add GEMINI_API_KEY or OPENROUTER_API_KEY to a .env file in the project root and restart the server.",
     );
   }
 
@@ -246,7 +274,14 @@ export async function runPipeline({ questionPages, answerPages, onProgress }) {
   onProgress({ stage: "mapping", progress: 70 });
 
   const answerByIndex = new Map(answers.map((answer) => [answer.index, answer]));
+  const questionByKey = new Map(
+    questions.map((question) => [normaliseLabel(question.number), question]),
+  );
   const usedAnswers = new Set();
+
+  // Keyed by the normalised number, never the raw string. Each stage is a
+  // separate model call and they do not agree on formatting: one run returns
+  // "1" where another returns "1.", which would silently lose the match.
   const matches = new Map();
 
   // Pass 1: the student wrote the question number next to the answer.
@@ -259,41 +294,50 @@ export async function runPipeline({ questionPages, answerPages, onProgress }) {
         normaliseLabel(answer.label) === target,
     );
     if (hit) {
-      matches.set(question.number, hit);
+      matches.set(target, hit);
       usedAnswers.add(hit.index);
     }
   }
 
   // Pass 2: semantic matching for answers with no written number.
   const semantic = await mapUnlabelledAnswers(
-    questions.filter((question) => !matches.has(question.number)),
+    questions.filter(
+      (question) => !matches.has(normaliseLabel(question.number)),
+    ),
     answers.filter((answer) => !usedAnswers.has(answer.index)),
   );
   for (const pair of semantic) {
     const answer = answerByIndex.get(Number(pair.answerIndex));
-    if (!answer || usedAnswers.has(answer.index)) continue;
-    if (matches.has(pair.questionNumber)) continue;
-    matches.set(pair.questionNumber, answer);
+    const key = normaliseLabel(pair.questionNumber);
+    // Ignore a number that is not on the paper: the model occasionally
+    // answers with one that was never printed.
+    if (!answer || !questionByKey.has(key)) continue;
+    if (usedAnswers.has(answer.index) || matches.has(key)) continue;
+    matches.set(key, answer);
     usedAnswers.add(answer.index);
   }
 
   onProgress({ stage: "grading", progress: 84 });
 
   const gradable = questions
-    .filter((question) => matches.has(question.number))
-    .map((question) => ({ question, answer: matches.get(question.number) }));
+    .filter((question) => matches.has(normaliseLabel(question.number)))
+    .map((question) => ({
+      question,
+      answer: matches.get(normaliseLabel(question.number)),
+    }));
 
   const grading = await gradePairs(gradable);
   const gradeByNumber = new Map(
     (grading.results ?? []).map((result) => [
-      String(result.questionNumber),
+      normaliseLabel(result.questionNumber),
       result,
     ]),
   );
 
   const mapped = questions.map((question) => {
-    const answer = matches.get(question.number) ?? null;
-    const grade = gradeByNumber.get(question.number);
+    const key = normaliseLabel(question.number);
+    const answer = matches.get(key) ?? null;
+    const grade = gradeByNumber.get(key);
     const max = question.maxMarks || (answer ? 1 : 0);
 
     if (!answer) {
@@ -310,15 +354,21 @@ export async function runPipeline({ questionPages, answerPages, onProgress }) {
       };
     }
 
-    const awarded = Math.max(0, Math.min(max, Number(grade?.awarded ?? 0)));
+    const lengthAware = applyLengthPolicy({
+      awarded: Number(grade?.awarded ?? 0),
+      status: grade?.status ?? "partial",
+      feedback: grade?.feedback ?? null,
+      maxMarks: max,
+      answerText: answer.text,
+    });
     return {
       id: question.id,
       number: question.number,
       text: question.text,
-      awarded,
+      awarded: lengthAware.awarded,
       max,
-      status: grade?.status ?? "partial",
-      feedback: grade?.feedback ?? null,
+      status: lengthAware.status,
+      feedback: lengthAware.feedback || null,
       answerText: answer.text,
       regions: answer.regions,
     };

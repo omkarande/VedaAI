@@ -3,15 +3,20 @@ node_modules/
 
 # Next.js / build output
 .next/
+.next-build/
 out/
 dist/
 build/
 *.tsbuildinfo
 
-# Environment and secrets (keep .env.example)
+# Environment and secrets — keep .env.example tracked
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
 
 # Logs and debug
 npm-debug.log*
@@ -19,14 +24,18 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+debug/
 
 # Vercel / local tooling
 .vercel/
 .turbo/
+.cursor/
+AGENTS.md
 
 # OS
 .DS_Store
 Thumbs.db
+ehthumbs.db
 Desktop.ini
 
 # Editor
@@ -35,14 +44,19 @@ Desktop.ini
 *.swp
 *.swo
 *~
+*.orig
 
-# Test leftovers and local sample files
+# Generated papers and local fixtures. The two sample PDFs stay tracked so a
+# reviewer can try the app without running the Windows-only generator.
 coverage/
-test-samples/
+test-samples/*
+!test-samples/question-paper.pdf
+!test-samples/answer-sheet.pdf
 test-results/
 playwright-report/
+scripts/tmp-*
 
-# Figma screenshots at the project root (not part of the app)
+# Figma screenshots dropped at the project root (not part of the app)
 /*.png
 /*.jpg
 /*.jpeg

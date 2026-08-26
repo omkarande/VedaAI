@@ -102,3 +102,33 @@ export async function renderFileToPages(
   }
   return renderImageFile(file);
 }
+
+/**
+ * Rasterises one or more uploads (PDF pages and/or photos) into a single
+ * page sequence, numbered in the order the files were added.
+ */
+export async function renderFilesToPages(
+  files: File[],
+  onPage?: (done: number, total: number) => void,
+): Promise<PageImage[]> {
+  if (!files.length) return [];
+
+  const expected = await Promise.all(files.map((file) => countPages(file)));
+  const total = Math.max(
+    1,
+    expected.reduce((sum, count) => sum + count, 0),
+  );
+  const all: PageImage[] = [];
+
+  for (const file of files) {
+    const pages = await renderFileToPages(file, (doneInFile) => {
+      onPage?.(all.length + doneInFile, total);
+    });
+    for (const page of pages) {
+      all.push({ ...page, page: all.length + 1 });
+    }
+    onPage?.(all.length, total);
+  }
+
+  return all;
+}

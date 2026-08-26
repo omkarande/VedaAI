@@ -1,6 +1,7 @@
 import type { UploadedFile } from "../types";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_FILES_PER_SLOT = 20;
 
 export function isPdf(file: File) {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -19,6 +20,7 @@ export function formatSize(bytes: number) {
 export function toUploadedFile(file: File): UploadedFile {
   const pdf = isPdf(file);
   return {
+    id: crypto.randomUUID(),
     name: file.name,
     sizeLabel: formatSize(file.size),
     kind: pdf ? "PDF" : "IMG",

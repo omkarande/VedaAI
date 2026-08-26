@@ -5,8 +5,8 @@ import AppShell from "./components/AppShell";
 import ExtractingScreen from "./components/ExtractingScreen";
 import MappingScreen from "./components/MappingScreen";
 import UploadScreen from "./components/UploadScreen";
-import { createJob, waitForJob } from "./lib/api";
-import { toUploadedFile } from "./lib/uploads";
+import { runJob } from "./lib/api";
+import { MAX_FILES_PER_SLOT, toUploadedFile } from "./lib/uploads";
 import type {
   AppView,
   JobStatus,
@@ -17,11 +17,12 @@ import type {
 
 type Slot = "question" | "answer";
 type Selection = { kind: "question" | "unmatched"; id: string };
+type SlotFile = { id: string; file: File };
 
 export default function App() {
   const [view, setView] = useState<AppView>("upload");
-  const [question, setQuestion] = useState<UploadedFile | null>(null);
-  const [answer, setAnswer] = useState<UploadedFile | null>(null);
+  const [question, setQuestion] = useState<UploadedFile[]>([]);
+  const [answer, setAnswer] = useState<UploadedFile[]>([]);
 
   const [stage, setStage] = useState<JobStatus>("rendering");
   const [progress, setProgress] = useState(0);
@@ -37,32 +38,57 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
 
-  const files = useRef<{ question: File | null; answer: File | null }>({
-    question: null,
-    answer: null,
+  const files = useRef<{ question: SlotFile[]; answer: SlotFile[] }>({
+    question: [],
+    answer: [],
   });
 
-  const handleFile = useCallback(async (slot: Slot, file: File) => {
-    files.current[slot] = file;
-    const uploaded = toUploadedFile(file);
+  const handleAdd = useCallback(async (slot: Slot, incoming: File[]) => {
     const apply = slot === "question" ? setQuestion : setAnswer;
-    apply(uploaded);
+    const remaining = MAX_FILES_PER_SLOT - files.current[slot].length;
+    const accepted = incoming.slice(0, Math.max(0, remaining));
+    if (!accepted.length) return;
+
+    const additions: SlotFile[] = [];
+    const uploaded: UploadedFile[] = [];
+    for (const file of accepted) {
+      const meta = toUploadedFile(file);
+      additions.push({ id: meta.id, file });
+      uploaded.push(meta);
+    }
+
+    files.current[slot] = [...files.current[slot], ...additions];
+    apply((current) => [...current, ...uploaded]);
 
     try {
       const { countPages } = await import("./lib/renderPages");
-      const pages = await countPages(file);
-      // Ignore the result if the user swapped the file while we were reading it.
-      if (files.current[slot] !== file) return;
-      apply({ ...uploaded, pages });
+      for (const item of additions) {
+        try {
+          const pages = await countPages(item.file);
+          if (!files.current[slot].some((entry) => entry.id === item.id)) {
+            continue;
+          }
+          apply((current) =>
+            current.map((entry) =>
+              entry.id === item.id ? { ...entry, pages } : entry,
+            ),
+          );
+        } catch {
+          // Page count is cosmetic; rendering will surface any real problem.
+        }
+      }
     } catch {
-      // Page count is cosmetic; rendering will surface any real problem.
+      // Same as above — a failed count does not block mapping.
     }
   }, []);
 
-  const handleRemove = useCallback((slot: Slot) => {
-    files.current[slot] = null;
-    if (slot === "question") setQuestion(null);
-    else setAnswer(null);
+  const handleRemove = useCallback((slot: Slot, id: string) => {
+    files.current[slot] = files.current[slot].filter((entry) => entry.id !== id);
+    if (slot === "question") {
+      setQuestion((current) => current.filter((entry) => entry.id !== id));
+    } else {
+      setAnswer((current) => current.filter((entry) => entry.id !== id));
+    }
   }, []);
 
   const reset = useCallback(() => {
@@ -75,9 +101,9 @@ export default function App() {
   }, []);
 
   const startMapping = useCallback(async () => {
-    const questionFile = files.current.question;
-    const answerFile = files.current.answer;
-    if (!questionFile || !answerFile) return;
+    const questionFiles = files.current.question.map((entry) => entry.file);
+    const answerFiles = files.current.answer.map((entry) => entry.file);
+    if (!questionFiles.length || !answerFiles.length) return;
 
     setView("extracting");
     setError(null);
@@ -85,39 +111,26 @@ export default function App() {
     setProgress(2);
 
     try {
-      const { renderFileToPages } = await import("./lib/renderPages");
-      const questionImages = await renderFileToPages(
-        questionFile,
+      const { renderFilesToPages } = await import("./lib/renderPages");
+      const questionImages = await renderFilesToPages(
+        questionFiles,
         (done, total) => setProgress(2 + (done / total) * 5),
       );
-      const answerImages = await renderFileToPages(
-        answerFile,
+      const answerImages = await renderFilesToPages(
+        answerFiles,
         (done, total) => setProgress(7 + (done / total) * 5),
       );
 
       setAnswerPages(answerImages);
-      setQuestion((current) =>
-        current ? { ...current, pages: questionImages.length } : current,
-      );
-      setAnswer((current) =>
-        current ? { ...current, pages: answerImages.length } : current,
-      );
 
       setStage("uploading");
       setProgress(12);
 
-      const id = await createJob(questionImages, answerImages);
-      const snapshot = await waitForJob(id, (update) => {
+      const mapping = await runJob(questionImages, answerImages, (update) => {
         setStage(update.stage);
         setProgress(Math.max(12, update.progress));
       });
 
-      if (snapshot.status === "error" || !snapshot.result) {
-        setError(snapshot.error ?? "Extraction failed");
-        return;
-      }
-
-      const mapping = snapshot.result;
       setResult(mapping);
       setPage(1);
 
@@ -169,7 +182,7 @@ export default function App() {
         <UploadScreen
           question={question}
           answer={answer}
-          onFile={handleFile}
+          onAdd={handleAdd}
           onRemove={handleRemove}
           onStart={startMapping}
         />

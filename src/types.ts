@@ -19,6 +19,7 @@ export type JobStatus =
   | "done";
 
 export type UploadedFile = {
+  id: string;
   name: string;
   sizeLabel: string;
   kind: "PDF" | "IMG";

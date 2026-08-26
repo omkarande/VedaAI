@@ -1,56 +1,93 @@
 import type { JobStatus, MappingResult, PageImage } from "../types";
 
-export type JobSnapshot = {
-  id: string;
-  status: "running" | "done" | "error";
+export type ProgressUpdate = {
   stage: JobStatus;
   progress: number;
-  error: string | null;
-  result: MappingResult | null;
+};
+
+type StreamLine = {
+  stage?: JobStatus;
+  progress?: number;
+  result?: MappingResult;
+  error?: string;
 };
 
 function stripped(pages: PageImage[]) {
   return pages.map((page) => ({ page: page.page, dataUrl: page.dataUrl }));
 }
 
-export async function createJob(
+/**
+ * Sends both documents and reads newline-delimited progress back from the
+ * single request that does the work.
+ */
+export async function runJob(
   questionPages: PageImage[],
   answerPages: PageImage[],
-): Promise<string> {
+  onProgress: (update: ProgressUpdate) => void,
+  signal?: AbortSignal,
+): Promise<MappingResult> {
   const response = await fetch("/api/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal,
     body: JSON.stringify({
       questionPages: stripped(questionPages),
       answerPages: stripped(answerPages),
     }),
   });
 
-  const payload = await response.json().catch(() => ({}));
+  if (response.status === 413) {
+    throw new Error(
+      "Those files are too large to send in one request. Try fewer pages or smaller images.",
+    );
+  }
+
   if (!response.ok) {
-    throw new Error(payload.error ?? "Could not start extraction");
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? "Could not start extraction.");
   }
-  return payload.id as string;
-}
 
-export async function fetchJob(id: string): Promise<JobSnapshot> {
-  const response = await fetch(`/api/jobs/${id}`);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error ?? "Could not read job");
-  return payload as JobSnapshot;
-}
+  if (!response.body) {
+    throw new Error("This browser cannot read streamed responses.");
+  }
 
-/** Polls a job until it finishes or fails. */
-export async function waitForJob(
-  id: string,
-  onUpdate: (snapshot: JobSnapshot) => void,
-  signal?: AbortSignal,
-): Promise<JobSnapshot> {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: MappingResult | null = null;
+
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+
+    let update: StreamLine;
+    try {
+      update = JSON.parse(line) as StreamLine;
+    } catch {
+      return;
+    }
+
+    if (update.error) throw new Error(update.error);
+    if (update.result) result = update.result;
+    if (update.stage) {
+      onProgress({ stage: update.stage, progress: update.progress ?? 0 });
+    }
+  };
+
   for (;;) {
-    if (signal?.aborted) throw new Error("cancelled");
-    const snapshot = await fetchJob(id);
-    onUpdate(snapshot);
-    if (snapshot.status !== "running") return snapshot;
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) handle(line);
   }
+
+  buffer += decoder.decode();
+  handle(buffer);
+
+  if (!result) {
+    throw new Error("The server closed the connection before finishing.");
+  }
+  return result;
 }
