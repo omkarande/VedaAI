@@ -19,12 +19,17 @@ const PAGES = [{ page: 1, dataUrl: "data:image/jpeg;base64,AAAA" }];
 const ARGS = { prompt: "hi", pages: PAGES, schema: { type: "object" } };
 
 let calls = [];
+let lastOpenRouterBody = null;
 
 function stubFetch(responder) {
   calls = [];
+  lastOpenRouterBody = null;
   globalThis.fetch = async (url, init) => {
     const provider = String(url).includes("openrouter") ? "openrouter" : "gemini";
     calls.push(provider);
+    if (provider === "openrouter" && init?.body) {
+      lastOpenRouterBody = JSON.parse(init.body);
+    }
     return responder(provider, init);
   };
 }
@@ -112,6 +117,11 @@ async function main() {
   check("OpenRouter-only skips Gemini", calls.join(",") === "openrouter", calls.join(","));
   check("OpenRouter-only returns JSON", result.ok === "openrouter");
   check("hasApiKey true with only OpenRouter", gemini.hasApiKey() === true);
+  check(
+    "OpenRouter caps max_tokens below the 65k reserve",
+    lastOpenRouterBody?.max_tokens === 8192,
+    String(lastOpenRouterBody?.max_tokens),
+  );
 
   // 6. No keys at all.
   delete process.env.OPENROUTER_API_KEY;

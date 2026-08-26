@@ -16,6 +16,16 @@ export const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 export const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL || "google/gemini-3.6-flash";
 
+/**
+ * OpenRouter otherwise reserves the model's full 65,536-token output and
+ * rejects the call with 402 if the key cannot cover that reserve. Exam JSON
+ * is far smaller; 8k is enough for questions, boxes and feedback.
+ */
+const OPENROUTER_MAX_TOKENS = Math.max(
+  1024,
+  Number(process.env.OPENROUTER_MAX_TOKENS) || 8192,
+);
+
 export function hasGeminiKey() {
   return Boolean(process.env.GEMINI_API_KEY);
 }
@@ -127,6 +137,7 @@ async function callOpenRouter({ prompt, pages, schema }) {
       model: OPENROUTER_MODEL,
       messages: [{ role: "user", content }],
       temperature: 0.1,
+      max_tokens: OPENROUTER_MAX_TOKENS,
       // Not strict: the schemas leave fields like maxMarks and label optional,
       // which strict mode forbids. The pipeline defaults every field anyway.
       response_format: {

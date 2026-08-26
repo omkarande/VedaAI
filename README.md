@@ -78,6 +78,8 @@ Gemini is always tried first so the free tier is spent before any paid credit. O
 
 Keep `OPENROUTER_MODEL` on a Gemini slug (default `google/gemini-3.6-flash`). The prompts ask for boxes on a 0–1000 grid; other families are much weaker at that, which would blunt the highlights.
 
+OpenRouter calls send `max_tokens: 8192`. Without that cap the API reserves the model's full 65,536-token output and returns **402** if the key cannot cover the reserve — even when the actual JSON is tiny. Override with `OPENROUTER_MAX_TOKENS` if needed.
+
 `GET /api/health` should show `hasApiKey: true` and which providers are configured.
 
 ---
