@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "src/app/api/jobs/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}

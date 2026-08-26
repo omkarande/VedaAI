@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Next.js / build output
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment and secrets (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs and debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Vercel / local tooling
+.vercel/
+.turbo/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test leftovers and local sample files
+coverage/
+test-samples/
+test-results/
+playwright-report/
+
+# Figma screenshots at the project root (not part of the app)
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
